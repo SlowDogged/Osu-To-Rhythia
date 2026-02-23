@@ -26,6 +26,17 @@ jobs:
 
       - name: Install dependencies
         run: pip install pyinstaller
+      
+      - name: Install Tkinter (Linux/macOS)
+        run: |
+          if [[ "$RUNNER_OS" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install -y python3-tk
+          elif [[ "$RUNNER_OS" == "macOS" ]]; then
+            brew install tcl-tk
+          fi
+        shell: bash
+
 
       - name: Build executable
         run: pyinstaller osutorythia.spec
