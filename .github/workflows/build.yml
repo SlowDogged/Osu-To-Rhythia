@@ -75,11 +75,11 @@ jobs:
 
       - name: Build app (macOS ARM)
         if: matrix.os == 'macos-latest'
-        run: pyinstaller osutorythia.spec --clean --distpath dist-arm
+        run: pyinstaller osutorythia-macos.spec --clean --distpath dist-arm
 
       - name: Build app (macOS Intel)
         if: matrix.os == 'macos-latest-large'
-        run: pyinstaller osutorythia.spec --clean --distpath dist-x64
+        run: pyinstaller osutorythia-macos.spec --clean --distpath dist-x64
 
       - name: Package output (Windows)
         if: matrix.os == 'windows-latest'
