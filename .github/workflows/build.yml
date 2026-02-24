@@ -7,84 +7,214 @@ on:
         description: "Enter the version (e.g., v1.0.0)"
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   build:
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
-
-    runs-on: ${{ matrix.os }}
+        os: [ubuntu-latest, windows-latest, macos-latest, macos-latest-large]
+    name: Build on ${{ matrix.os }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: '3.12'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/Library/Caches/pip
+            ~\AppData\Local\pip\Cache
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
       - name: Install dependencies
-        run: pip install pyinstaller
-      
-      - name: Install Tkinter (Linux/macOS)
         run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
           if [[ "$RUNNER_OS" == "Linux" ]]; then
             sudo apt-get update
-            sudo apt-get install -y python3-tk
+            sudo apt-get install -y \
+              python3-tk \
+              libxcb-xkb1 \
+              libxcb-image0 \
+              libxcb-cursor0 \
+              libxcb-render-util0 \
+              libxcb-shape0 \
+              libxcb-icccm4 \
+              libxcb-keysyms1 \
+              libxkbcommon-x11-0 \
+              libpulse0 \
+              xvfb
+
+            echo "DISPLAY=:99" >> $GITHUB_ENV
+            nohup Xvfb :99 -screen 0 1024x768x16 > /dev/null 2>&1 &
           elif [[ "$RUNNER_OS" == "macOS" ]]; then
             brew install tcl-tk
           fi
         shell: bash
 
+      - name: Build app (Windows)
+        if: matrix.os == 'windows-latest'
+        run: pyinstaller osutorythia.spec --clean
 
-      - name: Build executable
-        run: pyinstaller osutorythia.spec
+      - name: Build app (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: pyinstaller osutorythia.spec --clean
 
-      - name: Rename executable
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            mv dist/OsuToRythia.exe dist/OsuToRythia-windows.exe
-          elif [[ "$RUNNER_OS" == "Linux" ]]; then
-            mv dist/OsuToRythia dist/OsuToRythia-linux
-          elif [[ "$RUNNER_OS" == "macOS" ]]; then
-            mv dist/OsuToRythia dist/OsuToRythia-macos
-          fi
-        shell: bash
+      - name: Build app (macOS ARM)
+        if: matrix.os == 'macos-latest'
+        run: pyinstaller osutorythia-macos.spec --clean --distpath dist-arm
 
-      - name: Upload artifact
+      - name: Build app (macOS Intel)
+        if: matrix.os == 'macos-latest-large'
+        run: pyinstaller osutorythia-macos.spec --clean --distpath dist-x64
+
+      - name: Package output (Windows)
+        if: matrix.os == 'windows-latest'
+        run: 7z a OsuToRythia-windows.zip ./dist/*
+
+      - name: Package output (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        run: tar -czf OsuToRythia-linux.tar.gz -C dist OsuToRythia
+
+      - name: Upload build artifacts (Windows)
+        if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: OsuToRythia-${{ matrix.os }}
-          path: dist/*
+          name: OsuToRythia-windows
+          path: OsuToRythia-windows.zip
 
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download all build artifacts
-        uses: actions/download-artifact@v4
+      - name: Upload build artifacts (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: actions/upload-artifact@v4
         with:
-          merge-multiple: true
+          name: OsuToRythia-linux
+          path: OsuToRythia-linux.tar.gz
 
-      - name: List downloaded files (Debugging)
-        run: ls -R
+      - name: Upload build artifacts (macOS ARM)
+        if: matrix.os == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OsuToRythia-macos-arm
+          path: dist-arm/OsuToRythia.app
+          retention-days: 1
 
-      - name: Make files executable (Linux/Mac)
-        run: chmod +x OsuToRythia-* || true
+      - name: Upload build artifacts (macOS x64)
+        if: matrix.os == 'macos-latest-large'
+        uses: actions/upload-artifact@v4
+        with:
+          name: OsuToRythia-macos-x64
+          path: dist-x64/OsuToRythia.app
+          retention-days: 1
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload Release Asset (Windows)
+        if: matrix.os == 'windows-latest'
+        uses: softprops/action-gh-release@v1
         with:
           tag_name: ${{ github.event.inputs.version }}
           name: Release ${{ github.event.inputs.version }}
           draft: false
-          prerelease: false
+          files: OsuToRythia-windows.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload Release Asset (Linux)
+        if: matrix.os == 'ubuntu-latest'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          draft: false
+          files: OsuToRythia-linux.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  create-universal-macos:
+    needs: build
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download ARM build
+        uses: actions/download-artifact@v4
+        with:
+          name: OsuToRythia-macos-arm
+          path: dist-arm/OsuToRythia.app
+
+      - name: Download Intel build
+        uses: actions/download-artifact@v4
+        with:
+          name: OsuToRythia-macos-x64
+          path: dist-x64/OsuToRythia.app
+
+      - name: Create universal binary
+        run: |
+          mkdir -p dist-universal/OsuToRythia.app/Contents/MacOS
+          cp -r dist-arm/OsuToRythia.app/* dist-universal/OsuToRythia.app/
+          find dist-arm/OsuToRythia.app/Contents/MacOS -type f -perm +111 | while read arm_bin; do
+            rel_path="${arm_bin#dist-arm/OsuToRythia.app/Contents/MacOS/}"
+            x64_bin="dist-x64/OsuToRythia.app/Contents/MacOS/$rel_path"
+            out_bin="dist-universal/OsuToRythia.app/Contents/MacOS/$rel_path"
+
+            if [ -f "$x64_bin" ]; then
+              echo "Creating universal binary for: $rel_path"
+              lipo -create "$arm_bin" "$x64_bin" -output "$out_bin"
+            fi
+          done
+
+      - name: Install create-dmg
+        run: brew install create-dmg
+
+      - name: Create universal .dmg
+        run: |
+          create-dmg \
+            --volname "OsuToRythia Installer" \
+            --window-pos 200 120 \
+            --window-size 854 480 \
+            --icon-size 100 \
+            --app-drop-link 450 185 \
+            OsuToRythia.dmg \
+            dist-universal/OsuToRythia.app
+
+      - name: Create universal .pkg
+        run: |
+          pkgbuild \
+            --root dist-universal/OsuToRythia.app \
+            --identifier com.yourname.osutorythia \
+            --version ${{ github.event.inputs.version }} \
+            --install-location /Applications \
+            OsuToRythia.pkg
+
+      - name: Upload build artifacts (macOS)
+        uses: actions/upload-artifact@v4
+        with:
+          name: OsuToRythia-macos
+          path: |
+            OsuToRythia.pkg
+            OsuToRythia.dmg
+
+      - name: Upload Release Assets (macOS)
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: Release ${{ github.event.inputs.version }}
+          draft: false
           files: |
-            OsuToRythia-linux
-            OsuToRythia-windows.exe
-            OsuToRythia-macos
+            OsuToRythia.pkg
+            OsuToRythia.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
