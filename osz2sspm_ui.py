@@ -30,7 +30,7 @@ class App(tk.Tk):
         self.var_include_spinners = tk.BooleanVar(value=False)
         self.var_include_slider_ends = tk.BooleanVar(value=False)
         self.var_selected_osu = tk.StringVar()  # display string for combobox
-        
+        self.var_cover = tk.StringVar()  # optional custom cover image path
 
         self._build_ui()
 
@@ -63,6 +63,13 @@ class App(tk.Tk):
         ttk.Label(row3, text="Output (.sspm):", width=18).pack(side="left")
         ttk.Entry(row3, textvariable=self.var_output).pack(side="left", fill="x", expand=True, padx=6)
         ttk.Button(row3, text="Save As…", command=self.pick_output).pack(side="left")
+
+        # Row: optional cover image
+        row_cover = ttk.Frame(frm)
+        row_cover.pack(fill="x")
+        ttk.Label(row_cover, text="Cover image (optional):", width=18).pack(side="left")
+        ttk.Entry(row_cover, textvariable=self.var_cover).pack(side="left", fill="x", expand=True, padx=6)
+        ttk.Button(row_cover, text="Browse…", command=self.pick_cover).pack(side="left")
 
         # Options
         opt = ttk.LabelFrame(frm, text="Options")
@@ -123,6 +130,7 @@ class App(tk.Tk):
         self.osu_entries = []
         self.var_input.set("")
         self.var_output.set("")
+        self.var_cover.set("")
         self.var_selected_osu.set("")
         self.cmb_osu["values"] = []
         self.txt.delete("1.0", "end")
@@ -214,6 +222,14 @@ class App(tk.Tk):
             return
         self.var_output.set(fp)
 
+    def pick_cover(self):
+        fp = filedialog.askopenfilename(
+            title="Select cover image (optional)",
+            filetypes=[("Image files", "*.png *.jpg *.jpeg *.gif *.bmp *.webp"), ("All files", "*.*")],
+        )
+        if fp:
+            self.var_cover.set(fp)
+
     def _auto_output_name(self):
         # auto-suggest output name near the input file
         if not self.input_path or not self.osu_entries:
@@ -285,7 +301,17 @@ class App(tk.Tk):
             if not notes:
                 raise RuntimeError("No notes generated.")
 
+            # Cover: custom path overrides beatmap background
             cover_bytes = b""
+            cover_path_str = self.var_cover.get().strip()
+            if cover_path_str:
+                cover_path = Path(cover_path_str)
+                if cover_path.exists():
+                    cover_bytes = cover_path.read_bytes()
+            elif meta.background_filename:
+                bg_path = self.workdir / meta.background_filename
+                if bg_path.exists():
+                    cover_bytes = bg_path.read_bytes()
 
             map_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", f"{meta.artist}-{meta.title}-{meta.version}")[:64]
             map_name = f"{meta.title} [{meta.version}]"
@@ -312,6 +338,8 @@ class App(tk.Tk):
             self._log(f"✅ Chart: {meta.version}")
             self._log(f"✅ Notes: {len(notes)}")
             self._log(f"✅ Audio bytes: {len(audio_bytes)}")
+            if cover_bytes:
+                self._log(f"✅ Cover bytes: {len(cover_bytes)}")
 
             messagebox.showinfo("Done", f"Exported:\n{outp}\n\nChart: {meta.version}\nNotes: {len(notes)}")
 

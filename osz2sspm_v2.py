@@ -38,6 +38,7 @@ class OsuMeta:
     creator: str = "Unknown Mapper"
     version: str = "Converted"
     audio_filename: Optional[str] = None
+    background_filename: Optional[str] = None
     mode: int = 0
 
 
@@ -93,6 +94,13 @@ def parse_osu(osu_path: Path) -> Tuple[OsuMeta, List[Tuple[int, int, int, int]]]
                     meta.creator = v
                 elif k == "Version":
                     meta.version = v
+
+            elif section == "Events":
+                # Background: 0,0,"filename",xOffset,yOffset or 0,0,filename,xOffset,yOffset
+                if line.startswith("0,") and meta.background_filename is None:
+                    m = re.match(r'0,0,(?:"([^"]*)"|([^,]*))', line)
+                    if m:
+                        meta.background_filename = (m.group(1) or m.group(2) or "").strip() or None
 
             elif section == "HitObjects":
                 parts = line.split(",")
@@ -557,6 +565,7 @@ def main() -> int:
     ap.add_argument("--include-spinners", action="store_true", help="Convert spinner starts as notes")
     ap.add_argument("--map-id", type=str, default=None, help="Override map ID (default: derived from title)")
     ap.add_argument("--include-slider-ends", action="store_true", help="Also convert slider ENDs into notes (in addition to slider heads).")
+    ap.add_argument("--cover", type=Path, default=None, help="Optional path to cover image (overrides beatmap background).")
 
     args = ap.parse_args()
 
@@ -609,8 +618,15 @@ def main() -> int:
         if not notes:
             raise SystemExit("No notes generated.")
 
-        # No cover for now (you can add PNG embedding later)
         cover_bytes = b""
+        if args.cover is not None:
+            if not args.cover.exists():
+                raise SystemExit(f"Cover file not found: {args.cover}")
+            cover_bytes = args.cover.read_bytes()
+        elif meta.background_filename:
+            cover_path = workdir / meta.background_filename
+            if cover_path.exists():
+                cover_bytes = cover_path.read_bytes()
 
         map_id = args.map_id or re.sub(r"[^a-zA-Z0-9_\-]", "_", f"{meta.artist}-{meta.title}-{meta.version}")[:64]
         map_name = f"{meta.title} [{meta.version}]"
@@ -632,6 +648,8 @@ def main() -> int:
         print("✅ Wrote:", args.out)
         print("✅ Notes:", len(notes))
         print("✅ Audio bytes:", len(audio_bytes))
+        if cover_bytes:
+            print("✅ Cover bytes:", len(cover_bytes))
         return 0
 
     finally:
